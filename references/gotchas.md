@@ -2,7 +2,7 @@
 
 ## Dependencias de los scripts de consulta
 
-Cada `queries/<slug>/<slug>.py` lleva un encabezado PEP 723 con
+Cada `queries/<slug>.py` lleva un encabezado PEP 723 con
 `pandas` y `openpyxl`:
 
 ```python
@@ -12,7 +12,7 @@ Cada `queries/<slug>/<slug>.py` lleva un encabezado PEP 723 con
 # ///
 ```
 
-Eso permite `uv run queries/<slug>/<slug>.py` sin proyecto ni `--with`. Si
+Eso permite `uv run queries/<slug>.py` sin proyecto ni `--with`. Si
 borras el encabezado, `uv run` falla con `ModuleNotFoundError: No module named
 'pandas'`. No hace falta inicializar un proyecto uv en el directorio del
 usuario.

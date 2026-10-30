@@ -9,7 +9,7 @@ consultas.
 ```text
 inspect_excel.py   → inspecciona el Excel y escribe excel_schema.json (se conserva)
 excel_schema.json  → contrato de metadatos (lo único que lee la IA)
-queries/<slug>/    → carpeta por consulta, con <slug>.py y <slug>.csv
+queries/<slug>.py  → script por consulta; imprime el resultado como JSON a stdout
 ```
 
 ## Requisitos
@@ -45,12 +45,12 @@ La IA:
    uv run ~/.agents/skills/inspect-excel/inspect_excel.py ventas.xlsx
    ```
 2. Lee solo el `excel_schema.json` generado.
-3. Escribe `queries/<slug>/<slug>.py` (autocontenido) y lo ejecuta:
+3. Escribe `queries/<slug>.py` (autocontenido) y lo ejecuta:
    ```bash
-   uv run queries/<slug>/<slug>.py
+   uv run queries/<slug>.py
    ```
-4. Genera `queries/<slug>/<slug>.csv` (se sobrescribe en cada ejecución) y
-   devuelve un resumen compacto.
+4. La query imprime el resultado como JSON a stdout; la IA lo captura y devuelve
+   un resumen compacto (el usuario puede encadenarlo o guardarlo a archivo).
 
 ## CLI
 
@@ -73,7 +73,7 @@ uv run --with pytest --with openpyxl pytest -q
 
 - `SKILL.md` — flujo obligatorio para el agente.
 - `references/schema.md` — formato completo del `excel_schema.json`.
-- `references/recipes.md` — recetas de consulta (filtro, groupby, join, export).
+- `references/recipes.md` — recetas de consulta (filtro, groupby, join, emitir JSON, encadenar).
 - `references/query_template.py` — plantilla de script.
 - `references/gotchas.md` — fechas, fórmulas, celdas combinadas, ceros a la izquierda.
 

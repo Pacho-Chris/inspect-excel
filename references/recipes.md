@@ -1,20 +1,20 @@
 # Recetas de consulta
 
 Todas asumen que ya leíste `excel_schema.json` y conoces `header_row`,
-`data_start_row`, `name`, `letter` y `type` de las columnas involucradas.
+`name`, `letter` y `type` de las columnas involucradas (la primera fila de
+datos es `header_row + 1`).
 
-Cada consulta va en su propia carpeta:
+Cada consulta es un único script `queries/<slug>.py` (sin carpeta ni CSV):
 
 ```text
-queries/<slug>/
-  <slug>.py    # script autocontenido (encabezado PEP 723)
-  <slug>.csv   # resultado, se sobrescribe en cada ejecución
+queries/<slug>.py   # script autocontenido (encabezado PEP 723)
 ```
 
-Ejecutar (desde la raíz del proyecto, sin `--with`):
+Imprime el resultado como JSON a stdout; nada más va a stdout. Ejecutar (desde la
+raíz del proyecto, sin `--with`):
 
 ```bash
-uv run queries/<slug>/<slug>.py
+uv run queries/<slug>.py
 ```
 
 Base común para cargar una hoja con las columnas pedidas. El encabezado
@@ -28,10 +28,9 @@ PEP 723 y las rutas por `__file__` son obligatorios:
 from pathlib import Path
 import pandas as pd
 
-HERE = Path(__file__).parent
-ROOT = HERE.parent.parent
+HERE = Path(__file__).parent   # queries/
+ROOT = HERE.parent             # directorio de trabajo (donde está el Excel)
 XLSX = ROOT / "ventas.xlsx"
-OUT_CSV = HERE / (Path(__file__).stem + ".csv")   # <slug>.csv, se sobrescribe
 
 df = pd.read_excel(
     XLSX,
@@ -121,16 +120,52 @@ df["Categoria"].value_counts(dropna=False)
 df["Categoria"].unique()
 ```
 
-## Exportar resultado (obligatorio: sobrescribe el CSV de la query)
+## Emitir el resultado como JSON
+
+Al final de cada query, imprime el resultado como JSON a stdout (nada más va a
+stdout; cualquier nota va a `stderr`):
 
 ```python
-out.to_csv(OUT_CSV, index=False)          # CSV, en la carpeta de la query
-# out.to_parquet(HERE / "<slug>.parquet", index=False)  # si es muy grande
+print(out.to_json(orient="records", date_format="iso", force_ascii=False))
 ```
 
-Siempre escribe el resultado a `OUT_CSV` (o Parquet) dentro de la carpeta de la
-query. Devuelve la ruta y un resumen (`shape`, primeras filas), no el contenido
-completo.
+- `date_format="iso"` → fechas legibles; `force_ascii=False` → tildes/ñ correctas.
+- `NaN`/`None` salen como `null` (JSON válido) automáticamente.
+- No imprimas JSON gigante: agrega/limita antes (`head`, `groupby`, filtros).
+
+## Encadenar queries (una consume el JSON de otra)
+
+La query consumidora lee de stdin en vez de re-leer el Excel:
+
+```python
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["pandas>=2.2"]
+# ///
+import sys
+import pandas as pd
+
+df = pd.read_json(sys.stdin, orient="records")
+res = df.groupby("Cliente")["Monto"].sum().reset_index()
+print(res.to_json(orient="records", date_format="iso", force_ascii=False))
+```
+
+Las fechas viajan como ISO string y al re-leerlas quedan como `str`; si la query
+consumidora necesita operar con fechas, reconviértelas:
+`df["Fecha"] = pd.to_datetime(df["Fecha"])`.
+
+```bash
+uv run queries/filtrar.py | uv run queries/agrupar.py
+```
+
+## Guardar el resultado en un archivo
+
+La query solo imprime JSON; guardar es decisión del usuario con la shell:
+
+```bash
+uv run queries/<slug>.py > resultado.json   # a archivo
+uv run queries/<slug>.py | jq '.[0]'        # procesar con otra herramienta
+```
 
 ## Leer solo una parte (archivos muy grandes)
 

@@ -23,7 +23,7 @@ scripts de pandas mínimos para responder consultas del usuario.
 ```text
 inspect_excel.py   → inspecciona el Excel y escribe excel_schema.json (se conserva)
 excel_schema.json  → contrato de metadatos (lo único que lee la IA)
-queries/<slug>/    → carpeta por consulta, con <slug>.py y <slug>.csv
+queries/<slug>.py  → script por consulta; imprime el resultado como JSON a stdout
 ```
 
 ## Cuándo usarla
@@ -57,11 +57,11 @@ uv run ~/.agents/skills/inspect-excel/inspect_excel.py /ruta/a/datos.xlsx
 Lee solo `excel_schema.json`. Identifica libro, hoja, tabla y columnas por
 `pos`, `letter` y `name`. Fíjate en:
 
-- `type` / `pandas`: tipo inferido y dtype sugerido.
+- `type`: tipo inferido (el dtype de `read_excel` se deriva de la tabla de tipos).
 - `semantic`: `currency`, `percent`, `leading_zeros`.
 - `nulls`, `unique`, `enum`, `min`, `max`, `samples`.
 - `warnings`: `numeric_stored_as_text`, `leading_zeros_lossy`, etc.
-- `header_row` y `data_start_row`: dónde empiezan los datos.
+- `header_row`: dónde empieza la cabecera (los datos empiezan en `header_row + 1`).
 
 Para ver datos rápido sin escribir un script:
 
@@ -80,17 +80,17 @@ uv run ~/.agents/skills/inspect-excel/inspect_excel.py preview excel_schema.json
 
 ### 4. Generar el script de consulta
 
-Cada consulta va en **su propia carpeta**:
+Cada consulta es un único script plano:
 
 ```text
-queries/<slug>/<slug>.py    # script
-queries/<slug>/<slug>.csv   # resultado, se sobrescribe en cada ejecución
+queries/<slug>.py   # imprime el resultado como JSON a stdout
 ```
 
 El `<slug>` es el nombre de la query en minúsculas con guiones bajos
 (ej. "top10 vendedores por marca" → `top10_vendedores_por_marca`).
 
-Copia `references/query_template.py` a esa carpeta y ajusta. Reglas obligatorias:
+Copia `references/query_template.py` a `queries/<slug>.py` y ajusta. Reglas
+obligatorias:
 
 - **Encabezado PEP 723** al inicio del script (lo hace autocontenido y evita
   `ModuleNotFoundError: pandas`):
@@ -102,10 +102,11 @@ Copia `references/query_template.py` a esa carpeta y ajusta. Reglas obligatorias
   # ///
   ```
 
-- Rutas robustas con `__file__`: `HERE = Path(__file__).parent`,
-  `ROOT = HERE.parent.parent`, `OUT_CSV = HERE / "<slug>.csv"`.
-- Escribir el resultado con `out.to_csv(OUT_CSV, index=False)` (sobrescribe en
-  cada ejecución).
+- Rutas robustas con `__file__`: `HERE = Path(__file__).parent` (queries/),
+  `ROOT = HERE.parent`.
+- **Emitir el resultado como JSON a stdout**, y nada más:
+  `print(out.to_json(orient="records", date_format="iso", force_ascii=False))`.
+  Cualquier nota va a `stderr`.
 - Usar `header=None` + `skiprows=header_row` + `names=[...]` para que manden las
   columnas del schema (funciona con cabeceras duplicadas o vacías).
 - Usar `usecols="A:C"` (o las letras exactas) para leer solo lo pedido.
@@ -115,16 +116,21 @@ Copia `references/query_template.py` a esa carpeta y ajusta. Reglas obligatorias
 Ejecutarlo (sin `--with`, sin proyecto uv):
 
 ```bash
-uv run queries/<slug>/<slug>.py
+uv run queries/<slug>.py
+```
+
+Para encadenar o guardar (lo decide el usuario):
+
+```bash
+uv run queries/a.py | uv run queries/b.py   # una query consume el JSON de otra
+uv run queries/<slug>.py > resultado.json   # guardar a archivo
 ```
 
 ### 5. Devolver un resultado compacto
 
-Nunca imprimas miles de filas. El script ya escribe el CSV en la carpeta de la
-query. Devuelve:
-
-- `head(n)`, `shape`, agregados (`groupby`), y
-- la ruta del CSV/Parquet generado + un resumen.
+Ejecuta el script, captura el JSON de stdout y devuelve un resumen compacto:
+`head(n)`, `shape`, agregados (`groupby`) y el JSON (o un recorte si es largo).
+Nunca imprimas miles de filas ni JSON gigante en el chat.
 
 ### 6. Detectar cambios
 
@@ -158,13 +164,13 @@ Resumen de tipos: `text`, `integer`, `number`, `boolean`, `date`, `datetime`,
 
 - Leer el `.xlsx` completo en el contexto (pandas, raw, base64) en vez del schema.
 - Volcar miles de filas al chat.
-- Ignorar `header_row` / `data_start_row` y leer con `header=0` por defecto.
+- Mezclar notas o logs en stdout (rompe el JSON; deben ir a `stderr`).
+- Ignorar `header_row` y leer con `header=0` por defecto.
 - Tratar un ID con ceros a la izquierda como número.
 - Modificar el Excel original.
 - Re-generar el schema a cada consulta sin necesidad (usar `validate`).
 - Usar `read_excel` sin `usecols` en archivos grandes.
-- Generar el `.py` y el `.csv` sueltos en la raíz (siempre en
-  `queries/<slug>/`).
+- Generar el `.py` suelto en la raíz (siempre en `queries/<slug>.py`).
 - Quitar el encabezado PEP 723 del script (rompe `uv run` con
   `ModuleNotFoundError`).
 - Inicializar un proyecto uv en el directorio del usuario: no hace falta, cada
@@ -173,15 +179,15 @@ Resumen de tipos: `text`, `integer`, `number`, `boolean`, `date`, `datetime`,
 ## Criterio de terminado
 
 - `excel_schema.json` generado y leído (no se abrió el Excel en el contexto).
-- La consulta quedó en `queries/<slug>/<slug>.py` con su encabezado PEP 723.
-- El script corre con `uv run queries/<slug>/<slug>.py` y genera
-  `queries/<slug>/<slug>.csv`.
-- El resultado se devolvió compacto (head/agregados + ruta del CSV).
+- La consulta quedó en `queries/<slug>.py` con su encabezado PEP 723.
+- El script corre con `uv run queries/<slug>.py` e imprime JSON válido a stdout
+  (nada más en stdout).
+- El resultado se devolvió compacto (head/agregados + el JSON).
 - No se modificó el Excel original.
 
 ## Referencias
 
 - `references/schema.md`: formato completo del schema.
-- `references/recipes.md`: recetas de consulta (filtro, groupby, join, export).
+- `references/recipes.md`: recetas de consulta (filtro, groupby, join, emitir JSON, encadenar).
 - `references/query_template.py`: plantilla de script.
 - `references/gotchas.md`: fechas, fórmulas, celdas combinadas, ceros a la izquierda.

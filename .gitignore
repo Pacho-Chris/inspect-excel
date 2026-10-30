@@ -14,5 +14,3 @@ wheels/
 excel_schema.json
 *.schema.json
 queries/
-resultado.csv
-*.parquet

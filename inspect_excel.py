@@ -18,7 +18,6 @@ Uso:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import posixpath
@@ -33,7 +32,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter, range_boundaries
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 R_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 EXCEL_EXTS = (".xlsx", ".xlsm")
@@ -64,14 +63,6 @@ def iso(value) -> str:
 
 def iso_mtime(st) -> str:
     return datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat()
-
-
-def file_sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def any_nonempty(vals) -> bool:
@@ -303,12 +294,9 @@ def add_value(acc, kind, v, cell, args):
 def consolidate(acc, args) -> dict:
     col = {
         "type": None,
-        "pandas": None,
         "nulls": acc["nulls"],
-        "errors": acc["errors"],
-        "count": acc["count"],
+        "errors": acc["errors"] or None,
         "unique": None,
-        "unique_capped": acc["uniq_capped"],
         "samples": acc["samples"],
         "warnings": sorted(acc["warnings"]),
     }
@@ -317,36 +305,28 @@ def consolidate(acc, args) -> dict:
 
     if non_null == 0:
         col["type"] = "empty"
-        col["pandas"] = "object"
     elif kinds <= {"integer", "number"}:
         if kinds == {"integer"}:
             col["type"] = "integer"
-            col["pandas"] = "Int64"
         else:
             col["type"] = "number"
-            col["pandas"] = "float64"
             col["decimal_places"] = acc["decimals"]
         col["min"] = acc["nmin"]
         col["max"] = acc["nmax"]
     elif kinds <= {"date", "datetime"}:
         col["type"] = "datetime" if "datetime" in kinds else "date"
-        col["pandas"] = "datetime64[ns]"
         col["min"] = iso(acc["dmin"])
         col["max"] = iso(acc["dmax"])
     elif kinds == {"boolean"}:
         col["type"] = "boolean"
-        col["pandas"] = "boolean"
     elif kinds == {"time"}:
         col["type"] = "time"
-        col["pandas"] = "object"
     elif kinds == {"text"}:
         col["type"] = "text"
-        col["pandas"] = "string"
         if acc["numeric_text"] >= non_null:
             col["warnings"].append("numeric_stored_as_text")
     else:
         col["type"] = "mixed"
-        col["pandas"] = "object"
         col["types"] = dict(acc["types"])
         if acc["numeric_text"] > 0:
             col["warnings"].append("numeric_text_among_values")
@@ -495,11 +475,8 @@ def inspect_table(ws, table, args) -> dict:
         "table": table["displayName"] or table["name"],
         "range": table["ref"],
         "header_row": header_row,
-        "data_start_row": data_start,
         "rows": nonempty_rows,
-        "nonempty_rows": nonempty_rows,
         "sampled": sampled,
-        "scanned_rows": scanned,
         "columns": columns,
     }
 
@@ -585,8 +562,6 @@ def inspect_range(ws, args) -> dict:
     if not accs:
         finalize_header()
 
-    data_start = header_row + 1 if header_row else 1
-
     names = make_names(header_vals, ncols, [])
     columns = trim_trailing([build_column(accs[i], names[i], i + 1, args) for i in range(ncols)])
     ncols = len(columns)
@@ -597,11 +572,8 @@ def inspect_range(ws, args) -> dict:
         "table": None,
         "range": rng,
         "header_row": header_row,
-        "data_start_row": data_start,
         "rows": nonempty_rows,
-        "nonempty_rows": nonempty_rows,
         "sampled": sampled,
-        "scanned_rows": scanned,
         "columns": columns,
     }
 
@@ -642,14 +614,13 @@ def inspect_workbook(path: Path, args) -> dict:
 
 def inspect_file(path: Path, args) -> dict:
     st = path.stat()
-    entry = {
+    sheets = inspect_workbook(path, args)
+    return {
         "size": st.st_size,
         "mtime": iso_mtime(st),
-        "sheets": inspect_workbook(path, args),
+        "sheet_count": len({name.split("::")[0] for name in sheets}),
+        "sheets": sheets,
     }
-    if not args.no_hash:
-        entry["sha256"] = file_sha256(path)
-    return entry
 
 
 # --------------------------------------------------------------------------- #
@@ -784,9 +755,6 @@ def run_validate(args) -> int:
             if wb.get("mtime") and iso_mtime(st) != wb["mtime"]:
                 problems.append(f"{key}: modificado")
                 continue
-            if wb.get("sha256") and file_sha256(fp) != wb["sha256"]:
-                problems.append(f"{key}: contenido cambió")
-                continue
             ok += 1
             print(f"✓ {key}")
     if problems:
@@ -894,7 +862,7 @@ def run_preview(args) -> int:
 
     col_idxs = [column_index_from_string(c["letter"]) for c in columns]
     min_c, max_c = min(col_idxs), max(col_idxs)
-    start = target.get("data_start_row", 1)
+    start = target.get("header_row", 0) + 1
 
     rows = [[c["name"] for c in columns]]
     printed = 0
@@ -943,7 +911,6 @@ def build_parser() -> argparse.ArgumentParser:
     ip.add_argument("--header-scan", type=int, default=20, help="Filas a revisar para detectar cabecera")
     ip.add_argument("--sheet", action="append", help="Solo esta hoja (repetible)")
     ip.add_argument("--no-table", action="store_true", help="Ignorar tablas de Excel")
-    ip.add_argument("--no-hash", action="store_true", help="No calcular SHA-256")
 
     vp = sub.add_parser("validate", help="Verifica que el schema esté al día")
     vp.add_argument("paths", nargs="+", help="Schema(s) JSON o directorios")

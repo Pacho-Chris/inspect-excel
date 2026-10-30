@@ -17,7 +17,6 @@ class Args:
     footer_rows = 0
     header_row = None
     no_table = False
-    no_hash = True
     sheet = None
 
 
@@ -49,7 +48,6 @@ def test_detecta_tabla(xlsx):
     assert ventas["table"] == "TablaVentas"
     assert ventas["range"] == "A2:F12"
     assert ventas["header_row"] == 2
-    assert ventas["data_start_row"] == 3
     assert ventas["rows"] == 10
 
 
@@ -81,7 +79,6 @@ def test_clientes_cabecera_con_titulo(xlsx):
     clientes = sheets["Clientes"]
     assert clientes["kind"] == "range"
     assert clientes["header_row"] == 2
-    assert clientes["data_start_row"] == 3
     assert clientes["rows"] == 6
 
 
@@ -139,13 +136,14 @@ def test_schema_serializable(xlsx):
 
 def test_flujo_cli_y_validate(xlsx, tmp_path):
     schema = tmp_path / "excel_schema.json"
-    rc = ie.main(["inspect", str(xlsx), "--no-hash", "-o", str(schema)])
+    rc = ie.main(["inspect", str(xlsx), "-o", str(schema)])
     assert rc == 0
     assert schema.exists()
 
     data = json.loads(schema.read_text(encoding="utf-8"))
-    assert data["version"] == 1
+    assert data["version"] == 2
     assert "ventas.xlsx" in data["workbooks"]
+    assert data["workbooks"]["ventas.xlsx"]["sheet_count"] == 5
 
     # al día
     assert ie.main(["validate", str(schema)]) == 0
@@ -157,7 +155,7 @@ def test_flujo_cli_y_validate(xlsx, tmp_path):
 
 def test_preview(xlsx, tmp_path, capsys):
     schema = tmp_path / "excel_schema.json"
-    assert ie.main(["inspect", str(xlsx), "--no-hash", "-o", str(schema)]) == 0
+    assert ie.main(["inspect", str(xlsx), "-o", str(schema)]) == 0
 
     rc = ie.main(["preview", str(schema), "--sheet", "Ventas", "--columns", "1,2,3", "--limit", "4"])
     assert rc == 0
@@ -170,7 +168,7 @@ def test_preview(xlsx, tmp_path, capsys):
 
 def test_preview_columnas_por_letra_y_nombre(xlsx, tmp_path, capsys):
     schema = tmp_path / "excel_schema.json"
-    assert ie.main(["inspect", str(xlsx), "--no-hash", "-o", str(schema)]) == 0
+    assert ie.main(["inspect", str(xlsx), "-o", str(schema)]) == 0
     assert ie.main(["preview", str(schema), "--sheet", "Clientes", "--columns", "B,C", "--limit", "3"]) == 0
     out = capsys.readouterr().out
     assert "Nombre" in out and "Activo" in out
